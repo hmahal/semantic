@@ -1,0 +1,159 @@
+; tree-sitter-graph definitions mapping Python ASTs to an analyzable IR.
+
+(module) @this
+{
+  node @this.node
+  attr (@this.node) type = "module"
+  attr (@this.node) start-line = (start-row    @this)
+  attr (@this.node) start-col  = (start-column @this)
+  attr (@this.node) end-line   = (end-row      @this)
+  attr (@this.node) end-col    = (end-column   @this)
+}
+
+(identifier) @this
+{
+  node @this.node
+  attr (@this.node) type = "identifier"
+  var @this.text = (source-text @this)
+  attr (@this.node) text = (source-text @this)
+}
+
+(import_statement) @this
+{
+  node @this.node
+  attr (@this.node) type = "import"
+}
+
+(import_statement name: (dotted_name (identifier) @id)) @this
+{
+  edge @this.node -> @id.node
+  attr (@id.node) role = "module-name-fragment"
+  attr (@this.node -> @id.node) index = (named-child-index @id)
+  attr (@this.node -> @id.node) text = @id.text
+}
+
+(string) @this
+{
+  node @this.node
+  attr (@this.node) type = "string"
+  attr (@this.node) text = (source-text @this)
+}
+
+(true) @this
+{
+  node @this.node
+  attr (@this.node) type = "true"
+}
+
+(false) @this
+{
+  node @this.node
+  attr (@this.node) type = "false"
+}
+
+(print_statement argument: (_) @arg) @this
+{
+  node @this.node
+  attr (@this.node) type = "print"
+  edge @this.node -> @arg.node
+  attr (@this.node) start-line = (start-row    @this)
+  attr (@this.node) start-col  = (start-column @this)
+  attr (@this.node) end-line   = (end-row      @this)
+  attr (@this.node) end-col    = (end-column   @this)
+}
+
+(raise_statement (_) @arg) @this
+{
+  node @this.node
+  attr (@this.node) type = "throw"
+  edge @this.node -> @arg.node
+  attr (@this.node) start-line = (start-row    @this)
+  attr (@this.node) start-col  = (start-column @this)
+  attr (@this.node) end-line   = (end-row      @this)
+  attr (@this.node) end-col    = (end-column   @this)
+}
+
+(call function: (_) @function arguments: (argument_list (_)* @args)) @this
+{
+  node @this.node
+  attr (@this.node) function = (source-text @function)
+  attr (@this.node) type = "call"
+  for arg in @args {
+    edge @this.node -> arg.node
+  }
+  attr (@this.node) start-line = (start-row    @this)
+  attr (@this.node) start-col  = (start-column @this)
+  attr (@this.node) end-line   = (end-row      @this)
+  attr (@this.node) end-col    = (end-column   @this)
+}
+
+(expression_statement (_) @child) @this
+{
+  let @this.node = @child.node
+}
+
+(pass_statement) @this
+{
+  node @this.node
+  attr (@this.node) type = "noop"
+}
+
+(block (_)* @children) @this
+{
+  node @this.node
+  attr (@this.node) type = "block"
+  for child in @children {
+    edge @this.node -> child.node
+    attr (@this.node -> child.node) index = (named-child-index child)
+  }
+  attr (@this.node) start-line = (start-row    @this)
+  attr (@this.node) start-col  = (start-column @this)
+  attr (@this.node) end-line   = (end-row      @this)
+  attr (@this.node) end-col    = (end-column   @this)
+}
+
+(else_clause body: (_) @body) @this
+{
+  let @this.node = @body.node
+}
+
+(if_statement (_)) @this {
+  node @this.node
+  attr (@this.node) type = "if"
+  attr (@this.node) start-line = (start-row    @this)
+  attr (@this.node) start-col  = (start-column @this)
+  attr (@this.node) end-line   = (end-row      @this)
+  attr (@this.node) end-col    = (end-column   @this)
+}
+
+(if_statement condition: (_) @cond consequence: (_) @then) @this {
+  edge @this.node -> @cond.node
+  attr (@this.node -> @cond.node) type = "condition"
+  edge @this.node -> @then.node
+  attr (@this.node -> @then.node) type = "consequence"
+}
+
+(if_statement alternative: (_) @else) @this
+{
+  edge @this.node -> @else.node
+  attr (@this.node -> @else.node) type = "alternative"
+}
+
+(function_definition name: (_) @name body: (_) @body) @this
+{
+  node @this.node
+  attr (@this.node) type = "function"
+  attr (@this.node) name = (source-text @name)
+  edge @this.node -> @body.node
+  attr (@this.node -> @body.node) type = "body"
+  attr (@this.node) start-line = (start-row    @this)
+  attr (@this.node) start-col  = (start-column @this)
+  attr (@this.node) end-line   = (end-row      @this)
+  attr (@this.node) end-col    = (end-column   @this)
+}
+
+(module (_) @child) @this
+{
+  edge @this.node -> @child.node
+  attr (@this.node -> @child.node) index = (named-child-index @child)
+}

@@ -1,93 +1,146 @@
-{-# LANGUAGE FlexibleContexts, OverloadedStrings, ScopedTypeVariables, TypeOperators #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 module Analysis.FlowInsensitive
-( Heap
-, FrameId(..)
-, convergeTerm
+( -- * Flow-insensitive convergence
+  convergeTerm
 , cacheTerm
-, runHeap
-, foldMapA
+, CacheC(..)
+, runCache
+  -- * Kleene least fixed-point theorem
+, converge
+, convergeBy
+, convergeMaybe
+, convergeEither
+  -- * Caches
+, Cache(..)
+, emptyCache
+, lookupCache
+, insertCache
+, insertsCache
 ) where
 
-import           Control.Effect
-import           Control.Effect.Fresh
-import           Control.Effect.NonDet
-import           Control.Effect.Reader
-import           Control.Effect.State
+import           Analysis.Carrier.Store.Monovariant
+import           Control.Algebra
+import           Control.Carrier.NonDet.Church
+import           Control.Carrier.Reader
+import           Control.Carrier.State.Church
+import           Control.Monad ((<=<))
+import           Control.Monad.Fail as Fail
 import qualified Data.Map as Map
 import           Data.Maybe (fromMaybe)
-import           Data.Monoid (Alt(..))
 import qualified Data.Set as Set
 
-newtype Cache term a = Cache { unCache :: Map.Map term (Set.Set a) }
-  deriving (Eq, Ord, Show)
+convergeTerm
+  :: forall term value m sig
+  .  ( Has (State (MStore value)) sig m
+     , Ord term
+     , Ord value
+     )
+  => (term -> CacheC term value m value)
+  -> term
+  -> m (Set.Set value)
+convergeTerm eval term = do
+  heap <- get @(MStore value)
+  lookupCache term . fst <$> converge (\ (prevCache, _) -> runCache prevCache (eval term)) (emptyCache, heap)
 
-type Heap address a = Map.Map address (Set.Set a)
-
-newtype FrameId name = FrameId { unFrameId :: name }
-  deriving (Eq, Ord, Show)
-
-
-convergeTerm :: forall m sig a term address proxy
-             .  ( Carrier sig m
-                , Effect sig
-                , Eq address
-                , Member Fresh sig
-                , Member (State (Heap address a)) sig
-                , Ord a
-                , Ord term
-                )
-             => proxy address
-             -> (term -> NonDetC (ReaderC (Cache term a) (StateC (Cache term a) m)) a)
-             -> term
-             -> m (Set.Set a)
-convergeTerm _ eval body = do
-  heap <- get
-  (cache, _) <- converge (Cache Map.empty :: Cache term a, heap :: Heap address a) $ \ (prevCache, _) -> runState (Cache Map.empty) . runReader prevCache $ do
-    _ <- resetFresh . runNonDetM Set.singleton $ eval body
-    get
-  pure (fromMaybe mempty (Map.lookup body (unCache cache)))
-
-cacheTerm :: forall m sig a term
-          .  ( Alternative m
-             , Carrier sig m
-             , Member (Reader (Cache term a)) sig
-             , Member (State  (Cache term a)) sig
-             , Ord a
-             , Ord term
-             )
-          => (term -> m a)
-          -> (term -> m a)
+cacheTerm
+  :: ( Alternative m
+     , Has (Reader (Cache term value)) sig m
+     , Has (State  (Cache term value)) sig m
+     , Ord term
+     , Ord value
+     )
+  => (term -> m value)
+  -> (term -> m value)
 cacheTerm eval term = do
-  cached <- gets (Map.lookup term . unCache)
-  case cached :: Maybe (Set.Set a) of
-    Just results -> foldMapA pure results
-    Nothing -> do
-      results <- asks (fromMaybe mempty . Map.lookup term . unCache)
-      modify (Cache . Map.insert term (results :: Set.Set a) . unCache)
-      result <- eval term
-      result <$ modify (Cache . Map.insertWith (<>) term (Set.singleton (result :: a)) . unCache)
+  cached <- gets (lookupCache term)
+  if Set.null cached then do
+    results <- asks (lookupCache term)
+    modify (insertsCache term (results `asTypeOf` cached))
+    result <- eval term
+    result <$ modify (insertCache term result)
+  else
+    foldMapA pure cached
 
-runHeap :: StateC (Heap address a) m b -> m (Heap address a, b)
-runHeap m = runState Map.empty m
 
--- | Fold a collection by mapping each element onto an 'Alternative' action.
-foldMapA :: (Alternative m, Foldable t) => (b -> m a) -> t b -> m a
-foldMapA f = getAlt . foldMap (Alt . f)
+newtype CacheC term value m a = CacheC (NonDetC (ReaderC (Cache term value) (StateC (Cache term value) m)) a)
+  deriving (Algebra (NonDet :+: Reader (Cache term value) :+: State (Cache term value) :+: sig), Alternative, Applicative, Functor, Monad, Fail.MonadFail)
 
-runNonDetM :: (Monoid b, Applicative m) => (a -> b) -> NonDetC m a -> m b
-runNonDetM f (NonDetC m) = m (fmap . (<>) . f) (pure mempty)
+runCache :: (Has (State (MStore value)) sig m, Ord a) => Cache term value -> CacheC term value m a -> m (Cache term value, MStore value)
+runCache prevCache (CacheC m) = runState (curry pure) emptyCache (runReader prevCache (runNonDetM Set.singleton m *> get))
+
+
+-- Kleene least fixed-point theorem
 
 -- | Iterate a monadic action starting from some initial seed until the results converge.
 --
---   This applies the Kleene fixed-point theorem to finitize a monotone action. cf https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem
-converge :: (Eq a, Monad m)
-         => a          -- ^ An initial seed value to iterate from.
-         -> (a -> m a) -- ^ A monadic action to perform at each iteration, starting from the result of the previous iteration or from the seed value for the first iteration.
-         -> m a        -- ^ A computation producing the least fixed point (the first value at which the actions converge).
-converge seed f = loop seed
-  where loop x = do
-          x' <- f x
-          if x' == x then
-            pure x
-          else
-            loop x'
+-- This applies the Kleene fixed-point theorem to finitize a monotone action. cf https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem
+converge
+  :: (Eq a, Monad m)
+  => (a -> m a) -- ^ A monadic action to perform at each iteration, starting from the result of the previous iteration or from the seed value for the first iteration.
+  -> a          -- ^ An initial seed value to iterate from.
+  -> m a        -- ^ A computation producing the least fixed point (the first value at which the actions converge).
+converge = convergeBy (==)
+
+-- | Iterate a monadic action starting from some initial seed until the results converge according to the passed test.
+--
+-- This applies the Kleene fixed-point theorem to finitize a monotone action. cf https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem
+convergeBy
+  :: Monad m
+  => (a -> a -> Bool) -- ^ A function to use as the equality test to determine convergence.
+  -> (a -> m a)       -- ^ A monadic action to perform at each iteration, starting from the result of the previous iteration or from the seed value for the first iteration.
+  -> a                -- ^ An initial seed value to iterate from.
+  -> m a              -- ^ A computation producing the least fixed point (the first value at which the actions converge).
+convergeBy (==) f = convergeMaybe (\ x -> qualify x <$> f x)
+  where
+  qualify x x'
+    | x == x'   = Nothing
+    | otherwise = Just x'
+
+-- | Iterate a monadic action starting from some initial seed until the results converge.
+--
+-- This applies the Kleene fixed-point theorem to finitize a monotone action. cf https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem
+convergeMaybe
+  :: Monad m
+  => (a -> m (Maybe a)) -- ^ A monadic action to perform at each iteration, starting from the result of the previous iteration or from the seed value for the first iteration. Returns of 'Nothing' end iteration, while 'Just' begins another iteration.
+  -> a                  -- ^ An initial seed value to iterate from.
+  -> m a                -- ^ A computation producing the least fixed point (the first value at which the actions converge).
+convergeMaybe f = convergeEither (\ x -> maybe (Left x) Right <$> f x)
+
+-- | Iterate a monadic action starting from some initial seed until the results converge.
+--
+-- This applies the Kleene fixed-point theorem to finitize a monotone action. cf https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem
+convergeEither
+  :: Monad m
+  => (a -> m (Either b a)) -- ^ A monadic action to perform at each iteration, starting from the result of the previous iteration or from the seed value for the first iteration. Returns of 'Left' end iteration, while 'Right' begins another iteration.
+  -> a                     -- ^ An initial seed value to iterate from.
+  -> m b                   -- ^ A computation producing the least fixed point (the first value at which the actions converge).
+convergeEither f = loop
+  where
+  loop = either pure loop <=< f
+
+
+-- Caches
+
+newtype Cache term value = Cache { getCache :: Map.Map term (Set.Set value) }
+  deriving (Eq, Ord, Show)
+
+instance (Ord term, Ord value) => Semigroup (Cache term value) where
+  Cache a <> Cache b = Cache (Map.unionWith (<>) a b)
+
+instance (Ord term, Ord value) => Monoid (Cache term value) where
+  mempty = emptyCache
+
+emptyCache :: Cache term value
+emptyCache = Cache Map.empty
+
+lookupCache :: Ord term => term -> Cache term value -> Set.Set value
+lookupCache k (Cache m) = fromMaybe Set.empty (Map.lookup k m)
+
+insertCache :: (Ord term, Ord value) => term -> value -> Cache term value -> Cache term value
+insertCache term value (Cache m) = Cache (Map.insertWith (<>) term (Set.singleton value) m)
+
+insertsCache :: (Ord term, Ord value) => term -> Set.Set value -> Cache term value -> Cache term value
+insertsCache term values (Cache m) = Cache (Map.insertWith (<>) term values m)

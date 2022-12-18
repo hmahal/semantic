@@ -1,0 +1,63 @@
+-- ATTENTION: care must be taken to keep this file in sync with cabal.project and script/ghci-flags. If you add a package here, add it there (and add a package stanza with ghc-options to enable errors in CI at the bottom of this file).
+
+-- Local packages
+packages: semantic
+          semantic-analysis
+          semantic-ast
+          semantic-codeql
+          semantic-go
+          semantic-java
+          semantic-json
+          semantic-parse
+          semantic-php
+          semantic-proto
+          semantic-python
+          semantic-ruby
+          semantic-rust
+          semantic-scope-graph
+          semantic-tags
+          semantic-tsx
+          semantic-typescript
+
+-- Treat warnings as errors for CI builds
+package semantic
+  ghc-options: -Werror
+
+package semantic-analysis
+  ghc-options: -Werror
+
+package semantic-ast
+  ghc-options: -Werror
+
+package semantic-codeql
+  ghc-options: -Werror
+
+package semantic-go
+  ghc-options: -Werror
+
+package semantic-java
+  ghc-options: -Werror
+
+package semantic-json
+  ghc-options: -Werror
+
+package semantic-parse
+  ghc-options: -Werror
+
+package semantic-python
+  ghc-options: -Werror
+
+package semantic-ruby
+  ghc-options: -Werror
+
+package semantic-scope-graph
+  ghc-options: -Werror
+
+package semantic-tags
+  ghc-options: -Werror
+
+package semantic-tsx
+  ghc-options: -Werror
+
+package semantic-typescript
+  ghc-options: -Werror

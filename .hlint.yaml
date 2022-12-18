@@ -12,6 +12,7 @@
   - {name: init, within: []}
   - {name: last, within: []}
   - {name: fromJust, within: []}
+  - {name: decodeUtf8, within: [], message: "Use decodeUtf8' or decodeUtf8With lenientDecode"}
 
 # Replace a $ b $ c with a . b $ c
 - group: {name: dollar, enabled: true}
@@ -43,7 +44,6 @@
     name: Eta reduce
     within:
     - Language.Go.Assignment
-    - Language.PHP.Assignment
     - Language.Python.Assignment
     - Language.Ruby.Assignment
 
@@ -59,6 +59,7 @@
     name: Reduce duplication
     within:
       - Semantic.Util
+      - Language.Ruby.Tags
 
 # hlint has issues with QuantifiedConstraints (see https://github.com/ndmitchell/hlint/issues/759)
 # Once the above is fixed, we can drop this error.
